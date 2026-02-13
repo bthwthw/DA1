@@ -3,6 +3,7 @@ datasets/
 runs/
 *.pt
 *.onnx
+*.torchscript
 
 # Thư mục model OpenVINO
 *_openvino_model/

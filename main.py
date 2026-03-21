@@ -1,25 +1,23 @@
 # main.py
 import cv2
-import math
+import time
 from modules.detector import ObjectDetector
 from modules.estimator import DistanceEstimator
 
-# --- CẤU HÌNH (CONFIG) ---
-MODEL_PATH = 'yolov8n.onnx'
-REAL_WIDTH_PERSON = 40.0  
+MODEL_PATH = 'yolov8n_openvino_model/'
 FOCAL_LENGTH = 543.75  
+CAMERA_HEIGHT = 1.5  
+HORIZON_Y = 240 
 
 class VisionSystem:
     def __init__(self):
-        # Khởi tạo các module con
         self.detector = ObjectDetector(model_path=MODEL_PATH)
-        self.estimator = DistanceEstimator(FOCAL_LENGTH, REAL_WIDTH_PERSON)
+        self.estimator = DistanceEstimator(FOCAL_LENGTH, CAMERA_HEIGHT, HORIZON_Y)
         
-        # Mở Camera
         self.cap = cv2.VideoCapture(0)
-        if not self.cap.isOpened():
-            print("Error: Could not open webcam.")
-            exit()
+        
+        self.history = {} # {id_vật_thể: khoảng_cách_mét_ở_frame_trước}
+        self.fps_assumed = 30.0 # Giả định camera chạy 30 FPS để tính Delta T
 
     def run(self):
         print("System started. Press 'q' to exit.")
@@ -28,44 +26,59 @@ class VisionSystem:
             ret, frame = self.cap.read()
             if not ret: break
 
-            # 1. Gọi module AI để nhận diện
-            results = self.detector.detect(frame)
+            # goi yolo 
+            results = self.detector.track_objects(frame)
 
-            # 2. Xử lý kết quả
             for result in results:
                 boxes = result.boxes
                 for box in boxes:
-                    # Lấy class ID (0 là Person)
                     cls_id = int(box.cls[0])
                     
-                    if cls_id == 0: # Chỉ xử lý NGƯỜI
-                        # Lấy tọa độ bounding box
-                        x1, y1, x2, y2 = box.xyxy[0]
-                        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                    if cls_id == 0: # class 0 là person
+                        if box.id is None:
+                            continue
+                            
+                        obj_id = int(box.id[0])
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        u, v_bottom = self.detector.get_bottom_center(box)
                         
-                        # Tính chiều rộng pixel (w_pixel)
-                        w_pixel = x2 - x1
-                        
-                        # 3. Gọi module Toán để tính khoảng cách
-                        distance = self.estimator.estimate(w_pixel)
+                        # khoảng cách hiện tại (Z)
+                        current_distance = self.estimator.estimate(v_bottom)
+                        if current_distance < 0: continue
 
-                        # 4. Logic cảnh báo (STOP/GO)
-                        color = (0, 255, 0) # Xanh lá (An toàn)
+                        # TÍNH TOÁN TTC VÀ VẬN TỐC
+                        ttc = float('inf') # Khởi tạo TTC vô cực (an toàn)
                         status = "GO"
+                        color = (0, 255, 0)
                         
-                        if distance < 1.5:
-                            color = (0, 0, 255) # Đỏ (Nguy hiểm)
-                            status = "STOP"
+                        if obj_id in self.history:
+                            prev_distance = self.history[obj_id]
+                            
+                            # vận tốc tương đối (m/s)
+                            v_rel = (prev_distance - current_distance) * self.fps_assumed
+                            
+                            # Chỉ tính TTC nếu vật thể đang tiến lại gần (v_rel > 0)
+                            if v_rel > 0:
+                                ttc = current_distance / v_rel
+                                
+                                # nguy hiểm - cảnh báo 
+                                if ttc <= 4.0 or current_distance < 1.5:
+                                    color = (0, 0, 255) 
+                                    status = f"STOP! TTC: {ttc:.1f}s"
+                                else:
+                                    color = (0, 255, 255)
+                                    status = f"WARN: {ttc:.1f}s"
 
-                        # 5. Vẽ lên màn hình
+                        # thêm vô cái history 
+                        self.history[obj_id] = current_distance
+
+                        # hiển thị 
                         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                        label = f"Person: {distance:.2f}m | {status}"
+                        label = f"ID:{obj_id} | D:{current_distance:.1f}m | {status}"
                         cv2.putText(frame, label, (x1, y1 - 10), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-            # Hiển thị
-            cv2.imshow('Robot Vision System (ONNX)', frame)
-
+            cv2.imshow('Robot Vision System', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 

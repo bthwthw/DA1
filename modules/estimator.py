@@ -1,21 +1,23 @@
 # modules/estimator.py
 
 class DistanceEstimator:
-    def __init__(self, focal_length_px, real_width_cm):
+    def __init__(self, focal_length_y, camera_height_m, horizon_y):
         """
-        Khởi tạo bộ ước lượng khoảng cách.
-        :param focal_length_px: Tiêu cự ảo (tính bằng pixel)
-        :param real_width_cm: Chiều rộng thực tế của vật thể (cm)
+        :param focal_length_y: Tiêu cự trục dọc của camera (pixel) - f_y
+        :param camera_height_m: Chiều cao lắp đặt camera so với mặt đất (mét) - C_h
+        :param horizon_y: Tọa độ pixel trục dọc của đường chân trời - V_horizon - C_y
         """
-        self.focal_length = focal_length_px
-        self.real_width = real_width_cm
+        self.f_y = focal_length_y
+        self.c_h = camera_height_m
+        self.v_horizon = horizon_y
 
-    def estimate(self, width_px):
+    def estimate(self, v_bottom_px):
         """
-        Tính khoảng cách dựa trên độ rộng pixel.
-        Công thức: D = (W_real * Focal) / W_pixel
+        Tính khoảng cách Z dựa trên tọa độ pixel cạnh đáy của Bounding Box.
+        Công thức: Z = (f_y * C_h) / (V_bottom - V_horizon)
         """
-        if width_px == 0: return 0
+        if v_bottom_px <= self.v_horizon: 
+            return -1.0 
         
-        distance_cm = (self.real_width * self.focal_length) / width_px
-        return distance_cm / 100.0  # Đổi sang mét (m)
+        distance_m = (self.f_y * self.c_h) / (v_bottom_px - self.v_horizon)
+        return distance_m
